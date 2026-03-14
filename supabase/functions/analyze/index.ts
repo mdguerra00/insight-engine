@@ -5,6 +5,32 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
 };
 
+type DiagnosticStatus = "start" | "success" | "error" | "info";
+
+function logDiagnosticEvent(params: {
+  traceId: string;
+  stage: "edge_function" | "prompt" | "model_call";
+  status: DiagnosticStatus;
+  action: string;
+  details?: Record<string, unknown>;
+}) {
+  const payload = {
+    ts: new Date().toISOString(),
+    trace_id: params.traceId,
+    stage: params.stage,
+    status: params.status,
+    action: params.action,
+    details: params.details,
+  };
+
+  if (params.status === "error") {
+    console.error("[diagnostic]", payload);
+    return;
+  }
+
+  console.log("[diagnostic]", payload);
+}
+
 const SYSTEM_PROMPT = `Você é um analista empresarial, financeiro, contábil e fiscal de altíssimo nível.
 
 Sua tarefa é analisar profundamente documentos empresariais fornecidos pelo sistema e produzir um relatório executivo preciso, rigoroso e útil para tomada de decisão.
@@ -59,9 +85,25 @@ serve(async (req) => {
   }
 
   try {
-    const { payload } = await req.json();
+    const { payload, trace_id: traceIdFromRequest } = await req.json();
+    const traceId = typeof traceIdFromRequest === "string" && traceIdFromRequest
+      ? traceIdFromRequest
+      : crypto.randomUUID();
+
+    logDiagnosticEvent({
+      traceId,
+      stage: "edge_function",
+      status: "start",
+      action: "request_received",
+    });
     
     if (!payload || !payload.documents || payload.documents.length === 0) {
+      logDiagnosticEvent({
+        traceId,
+        stage: "edge_function",
+        status: "error",
+        action: "invalid_payload",
+      });
       return new Response(
         JSON.stringify({ error: "Nenhum documento com conteúdo extraído fornecido." }),
         { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
@@ -70,14 +112,39 @@ serve(async (req) => {
 
     const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
     if (!LOVABLE_API_KEY) {
+      logDiagnosticEvent({
+        traceId,
+        stage: "edge_function",
+        status: "error",
+        action: "missing_api_key",
+      });
       throw new Error("LOVABLE_API_KEY is not configured");
     }
+
+    logDiagnosticEvent({
+      traceId,
+      stage: "prompt",
+      status: "info",
+      action: "prompt_prepared",
+      details: {
+        document_count: payload.documents.length,
+        source_types: payload.documents.map((doc: { source_type?: string }) => doc.source_type ?? "unknown"),
+      },
+    });
 
     const userMessage = `Analise os seguintes documentos empresariais e produza o relatório executivo conforme as instruções.
 
 Dados dos documentos:
 
 ${JSON.stringify(payload, null, 2)}`;
+
+    logDiagnosticEvent({
+      traceId,
+      stage: "model_call",
+      status: "start",
+      action: "gateway_request_started",
+      details: { model: "google/gemini-2.5-pro" },
+    });
 
     const response = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
       method: "POST",
@@ -109,12 +176,29 @@ ${JSON.stringify(payload, null, 2)}`;
         );
       }
       const t = await response.text();
+      logDiagnosticEvent({
+        traceId,
+        stage: "model_call",
+        status: "error",
+        action: "gateway_request_failed",
+        details: {
+          status_code: response.status,
+          body: t,
+        },
+      });
       console.error("AI gateway error:", response.status, t);
       return new Response(
         JSON.stringify({ error: "Erro ao chamar o modelo de IA." }),
         { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
+
+    logDiagnosticEvent({
+      traceId,
+      stage: "model_call",
+      status: "success",
+      action: "gateway_stream_ready",
+    });
 
     return new Response(response.body, {
       headers: { ...corsHeaders, "Content-Type": "text/event-stream" },

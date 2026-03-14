@@ -9,6 +9,7 @@ import { extractPdf } from '@/lib/extractors/extractPdf';
 import { extractXlsx } from '@/lib/extractors/extractXlsx';
 import { extractCsv } from '@/lib/extractors/extractCsv';
 import { buildAnalysisPayload } from '@/lib/buildAnalysisPayload';
+import { createTraceId, logDiagnosticEvent } from '@/lib/structuredLogger';
 import type { DocumentWithExtraction, ExtractionStatus } from '@/types/documents';
 import { Loader2, AlertCircle, Play } from 'lucide-react';
 import { toast } from 'sonner';
@@ -21,6 +22,17 @@ function getFileType(file: File): string {
   return ext;
 }
 
+function toErrorDetails(error: unknown) {
+  if (error instanceof Error) {
+    return {
+      name: error.name,
+      message: error.message,
+    };
+  }
+
+  return { message: String(error) };
+}
+
 const Index = () => {
   const [documents, setDocuments] = useState<DocumentWithExtraction[]>([]);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
@@ -29,10 +41,27 @@ const Index = () => {
   const [isStreaming, setIsStreaming] = useState(false);
 
   const handleFilesSelected = useCallback(async (files: File[]) => {
+    const traceId = createTraceId();
+
     for (const file of files) {
       const fileType = getFileType(file);
       const docId = crypto.randomUUID();
       const storagePath = `uploads/${docId}/${file.name}`;
+
+      logDiagnosticEvent({
+        trace_id: traceId,
+        stage: 'upload',
+        status: 'start',
+        action: 'file_received',
+        document_id: docId,
+        file_name: file.name,
+        details: {
+          file_type: fileType,
+          mime_type: file.type,
+          size_bytes: file.size,
+          storage_path: storagePath,
+        },
+      });
 
       // Add document to state
       const newDoc: DocumentWithExtraction = {
@@ -68,6 +97,25 @@ const Index = () => {
         setDocuments(prev => prev.map(d =>
           d.id === docId ? { ...d, upload_status: 'uploaded' as const, extraction: { id: '', document_id: docId, extraction_status: 'extracting' as ExtractionStatus, detected_type: fileType, preview_text: '', extracted_text: null, extracted_json: null, created_at: new Date().toISOString() } } : d
         ));
+
+        logDiagnosticEvent({
+          trace_id: traceId,
+          stage: 'upload',
+          status: 'success',
+          action: 'storage_and_document_saved',
+          document_id: docId,
+          file_name: file.name,
+        });
+
+        logDiagnosticEvent({
+          trace_id: traceId,
+          stage: 'extraction',
+          status: 'start',
+          action: 'client_extraction_started',
+          document_id: docId,
+          file_name: file.name,
+          details: { extractor: fileType },
+        });
 
         // Extract content client-side
         let extractionStatus: ExtractionStatus = 'failed';
@@ -107,6 +155,20 @@ const Index = () => {
           extracted_json: extractedJson as Json,
         });
 
+        logDiagnosticEvent({
+          trace_id: traceId,
+          stage: 'extraction',
+          status: extractionStatus === 'failed' ? 'error' : 'success',
+          action: 'extraction_completed',
+          document_id: docId,
+          file_name: file.name,
+          details: {
+            extraction_id: extractionId,
+            extraction_status: extractionStatus,
+            preview_size: previewText.length,
+          },
+        });
+
         // Update state
         setDocuments(prev => prev.map(d =>
           d.id === docId ? {
@@ -134,6 +196,15 @@ const Index = () => {
         }
       } catch (err) {
         console.error('Upload/extraction error:', err);
+        logDiagnosticEvent({
+          trace_id: traceId,
+          stage: 'upload',
+          status: 'error',
+          action: 'upload_or_extraction_failed',
+          document_id: docId,
+          file_name: file.name,
+          details: toErrorDetails(err),
+        });
         setDocuments(prev => prev.map(d =>
           d.id === docId ? { ...d, upload_status: 'error' as const } : d
         ));
@@ -154,12 +225,43 @@ const Index = () => {
   const handleAnalyze = useCallback(async () => {
     if (!canAnalyze) return;
 
+    const traceId = createTraceId();
+
+    logDiagnosticEvent({
+      trace_id: traceId,
+      stage: 'payload',
+      status: 'start',
+      action: 'analysis_requested',
+      details: {
+        total_documents: documents.length,
+        extracted_documents: extractedDocs.length,
+      },
+    });
+
     setIsAnalyzing(true);
     setReportText('');
     setIsStreaming(true);
 
     try {
       const payload = buildAnalysisPayload(documents);
+
+      logDiagnosticEvent({
+        trace_id: traceId,
+        stage: 'payload',
+        status: 'success',
+        action: 'payload_built',
+        details: {
+          payload_document_count: payload.documents.length,
+          payload_source_types: payload.documents.map(doc => doc.source_type),
+        },
+      });
+
+      logDiagnosticEvent({
+        trace_id: traceId,
+        stage: 'edge_function',
+        status: 'start',
+        action: 'invoke_analyze_function',
+      });
 
       const response = await fetch(
         `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/analyze`,
@@ -169,14 +271,31 @@ const Index = () => {
             'Content-Type': 'application/json',
             Authorization: `Bearer ${import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY}`,
           },
-          body: JSON.stringify({ payload }),
+          body: JSON.stringify({ payload, trace_id: traceId }),
         }
       );
 
       if (!response.ok) {
         const errorData = await response.json().catch(() => ({}));
+        logDiagnosticEvent({
+          trace_id: traceId,
+          stage: 'edge_function',
+          status: 'error',
+          action: 'analyze_function_http_error',
+          details: {
+            status_code: response.status,
+            error: errorData,
+          },
+        });
         throw new Error(errorData.error || `Erro HTTP ${response.status}`);
       }
+
+      logDiagnosticEvent({
+        trace_id: traceId,
+        stage: 'edge_function',
+        status: 'success',
+        action: 'analyze_function_stream_open',
+      });
 
       if (!response.body) throw new Error('Sem corpo na resposta');
 
@@ -244,26 +363,74 @@ const Index = () => {
       const now = new Date().toISOString();
       setReportCreatedAt(now);
 
-      // Save report to DB
-      const reportId = crypto.randomUUID();
-      await supabase.from('analysis_reports').insert({
-        id: reportId,
-        report_text: fullReport,
-        report_json: null,
-        created_at: now,
+      logDiagnosticEvent({
+        trace_id: traceId,
+        stage: 'report',
+        status: 'success',
+        action: 'report_stream_completed',
+        details: {
+          report_size_chars: fullReport.length,
+        },
       });
 
-      // Save report-document relations
-      for (const doc of extractedDocs) {
-        await supabase.from('report_documents').insert({
+      // Save report to DB
+      const reportId = crypto.randomUUID();
+      logDiagnosticEvent({
+        trace_id: traceId,
+        stage: 'save',
+        status: 'start',
+        action: 'persist_report_started',
+        details: {
           report_id: reportId,
-          document_id: doc.id,
+        },
+      });
+
+      try {
+        await supabase.from('analysis_reports').insert({
+          id: reportId,
+          report_text: fullReport,
+          report_json: null,
+          created_at: now,
         });
+
+        // Save report-document relations
+        for (const doc of extractedDocs) {
+          await supabase.from('report_documents').insert({
+            report_id: reportId,
+            document_id: doc.id,
+          });
+        }
+
+        logDiagnosticEvent({
+          trace_id: traceId,
+          stage: 'save',
+          status: 'success',
+          action: 'report_saved_with_relations',
+          details: {
+            report_document_count: extractedDocs.length,
+          },
+        });
+      } catch (saveError) {
+        logDiagnosticEvent({
+          trace_id: traceId,
+          stage: 'save',
+          status: 'error',
+          action: 'persist_report_failed',
+          details: toErrorDetails(saveError),
+        });
+        throw saveError;
       }
 
       toast.success('Relatório gerado com sucesso');
     } catch (err) {
       console.error('Analysis error:', err);
+      logDiagnosticEvent({
+        trace_id: traceId,
+        stage: 'report',
+        status: 'error',
+        action: 'analysis_failed',
+        details: toErrorDetails(err),
+      });
       toast.error(err instanceof Error ? err.message : 'Erro ao gerar relatório');
       setIsStreaming(false);
     } finally {

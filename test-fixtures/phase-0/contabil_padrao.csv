@@ -1,0 +1,6 @@
+conta,descricao,debito,credito,data
+1.1.01,Caixa,15000.00,0.00,2026-01-02
+3.1.01,Receita de Serviços,0.00,22000.00,2026-01-31
+3.2.01,Impostos sobre Vendas,1800.00,0.00,2026-01-31
+4.1.01,Despesa Operacional,7200.00,0.00,2026-01-31
+2.1.01,Fornecedores,0.00,5200.00,2026-01-28
