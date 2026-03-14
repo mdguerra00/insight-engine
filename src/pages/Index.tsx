@@ -1,5 +1,6 @@
 import React, { useState, useCallback } from 'react';
 import { supabase } from '@/integrations/supabase/client';
+import type { Json } from '@/integrations/supabase/types';
 import { FileUpload } from '@/components/FileUpload';
 import { DocumentCard } from '@/components/DocumentCard';
 import { ReportViewer } from '@/components/ReportViewer';
