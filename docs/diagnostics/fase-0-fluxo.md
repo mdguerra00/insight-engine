@@ -27,7 +27,7 @@ Recomendação de branch para esta fase:
    - Recebe `{ payload, trace_id }`.
    - Valida presença de documentos no payload.
    - Monta mensagem com `SYSTEM_PROMPT` + payload serializado.
-   - Encaminha para gateway de IA em modo streaming.
+   - Encaminha para um adaptador isolado de LLM (`llmClient.ts`) com provider OpenAI em modo streaming.
 
 5. **Report** (`src/pages/Index.tsx`)
    - Consome SSE (`data:`) do endpoint de análise.

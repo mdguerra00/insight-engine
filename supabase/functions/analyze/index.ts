@@ -1,4 +1,5 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
+import { createLlmClient } from "./llmClient.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -110,15 +111,17 @@ serve(async (req) => {
       );
     }
 
-    const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
-    if (!LOVABLE_API_KEY) {
+    let llmClient;
+    try {
+      llmClient = createLlmClient();
+    } catch (error) {
       logDiagnosticEvent({
         traceId,
         stage: "edge_function",
         status: "error",
         action: "missing_api_key",
       });
-      throw new Error("LOVABLE_API_KEY is not configured");
+      throw error;
     }
 
     logDiagnosticEvent({
@@ -142,24 +145,20 @@ ${JSON.stringify(payload, null, 2)}`;
       traceId,
       stage: "model_call",
       status: "start",
-      action: "gateway_request_started",
-      details: { model: "google/gemini-2.5-pro" },
+      action: "provider_request_started",
+      details: {
+        provider: "openai",
+        model: llmClient.models.report,
+      },
     });
 
-    const response = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${LOVABLE_API_KEY}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        model: "google/gemini-2.5-pro",
-        messages: [
-          { role: "system", content: SYSTEM_PROMPT },
-          { role: "user", content: userMessage },
-        ],
-        stream: true,
-      }),
+    const response = await llmClient.generateMarkdown({
+      messages: [
+        { role: "system", content: SYSTEM_PROMPT },
+        { role: "user", content: userMessage },
+      ],
+      model: llmClient.models.report,
+      stream: true,
     });
 
     if (!response.ok) {
@@ -180,13 +179,13 @@ ${JSON.stringify(payload, null, 2)}`;
         traceId,
         stage: "model_call",
         status: "error",
-        action: "gateway_request_failed",
+        action: "provider_request_failed",
         details: {
           status_code: response.status,
           body: t,
         },
       });
-      console.error("AI gateway error:", response.status, t);
+      console.error("OpenAI request error:", response.status, t);
       return new Response(
         JSON.stringify({ error: "Erro ao chamar o modelo de IA." }),
         { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
@@ -197,7 +196,7 @@ ${JSON.stringify(payload, null, 2)}`;
       traceId,
       stage: "model_call",
       status: "success",
-      action: "gateway_stream_ready",
+      action: "provider_stream_ready",
     });
 
     return new Response(response.body, {
