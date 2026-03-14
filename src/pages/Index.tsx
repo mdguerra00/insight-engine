@@ -263,13 +263,20 @@ const Index = () => {
         action: 'invoke_analyze_function',
       });
 
+      const supabaseApiKey =
+        import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY ?? import.meta.env.VITE_SUPABASE_ANON_KEY;
+
+      if (!import.meta.env.VITE_SUPABASE_URL || !supabaseApiKey) {
+        throw new Error('Configuração Supabase ausente no frontend.');
+      }
+
       const response = await fetch(
         `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/analyze`,
         {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
-            Authorization: `Bearer ${import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY}`,
+            Authorization: `Bearer ${supabaseApiKey}`,
           },
           body: JSON.stringify({ payload, trace_id: traceId }),
         }
