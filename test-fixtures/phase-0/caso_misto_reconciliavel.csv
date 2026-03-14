@@ -1,0 +1,6 @@
+fonte,periodo,valor,observacao
+nota_fiscal,2026-01,120000.00,Receita bruta emitida
+extrato_bancario,2026-01,118500.00,Recebimento líquido no período
+impostos_retidos,2026-01,1500.00,IRRF + ISS retidos na fonte
+descontos_comerciais,2026-01,0.00,Sem descontos adicionais
+reconciliacao,2026-01,120000.00,Soma de líquido + retidos + descontos
