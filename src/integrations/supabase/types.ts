@@ -14,7 +14,128 @@ export type Database = {
   }
   public: {
     Tables: {
-      [_ in never]: never
+      analysis_reports: {
+        Row: {
+          created_at: string
+          id: string
+          report_json: Json | null
+          report_text: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          report_json?: Json | null
+          report_text: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          report_json?: Json | null
+          report_text?: string
+        }
+        Relationships: []
+      }
+      document_extractions: {
+        Row: {
+          created_at: string
+          detected_type: string | null
+          document_id: string
+          extracted_json: Json | null
+          extracted_text: string | null
+          extraction_status: string
+          id: string
+          preview_text: string | null
+        }
+        Insert: {
+          created_at?: string
+          detected_type?: string | null
+          document_id: string
+          extracted_json?: Json | null
+          extracted_text?: string | null
+          extraction_status?: string
+          id?: string
+          preview_text?: string | null
+        }
+        Update: {
+          created_at?: string
+          detected_type?: string | null
+          document_id?: string
+          extracted_json?: Json | null
+          extracted_text?: string | null
+          extraction_status?: string
+          id?: string
+          preview_text?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "document_extractions_document_id_fkey"
+            columns: ["document_id"]
+            isOneToOne: false
+            referencedRelation: "documents"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      documents: {
+        Row: {
+          created_at: string
+          file_name: string
+          file_type: string
+          id: string
+          mime_type: string
+          storage_path: string
+          upload_status: string
+        }
+        Insert: {
+          created_at?: string
+          file_name: string
+          file_type: string
+          id?: string
+          mime_type: string
+          storage_path: string
+          upload_status?: string
+        }
+        Update: {
+          created_at?: string
+          file_name?: string
+          file_type?: string
+          id?: string
+          mime_type?: string
+          storage_path?: string
+          upload_status?: string
+        }
+        Relationships: []
+      }
+      report_documents: {
+        Row: {
+          document_id: string
+          report_id: string
+        }
+        Insert: {
+          document_id: string
+          report_id: string
+        }
+        Update: {
+          document_id?: string
+          report_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "report_documents_document_id_fkey"
+            columns: ["document_id"]
+            isOneToOne: false
+            referencedRelation: "documents"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "report_documents_report_id_fkey"
+            columns: ["report_id"]
+            isOneToOne: false
+            referencedRelation: "analysis_reports"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
     }
     Views: {
       [_ in never]: never
