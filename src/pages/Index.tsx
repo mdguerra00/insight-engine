@@ -104,7 +104,7 @@ const Index = () => {
           detected_type: detectedType,
           preview_text: previewText,
           extracted_text: extractedText,
-          extracted_json: extractedJson,
+          extracted_json: extractedJson as Json,
         });
 
         // Update state
