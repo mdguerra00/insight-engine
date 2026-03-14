@@ -35,7 +35,7 @@ const DEFAULT_EXTRACTION_MODEL = "gpt-4.1-mini";
 const DEFAULT_REPORT_MODEL = "gpt-4.1";
 
 export function createLlmClient(config: OpenAIConfig = {}) {
-  const apiKey = config.apiKey ?? Deno.env.get("OPENAI_API_KEY");
+  const apiKey = config.apiKey ?? "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";
 
   if (!apiKey) {
     throw new Error("OPENAI_API_KEY is not configured");
