@@ -3,6 +3,7 @@ import { createLlmClient } from "./llmClient.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Methods": "POST, OPTIONS",
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
 };
 
@@ -85,8 +86,25 @@ serve(async (req) => {
     return new Response(null, { headers: corsHeaders });
   }
 
+  if (req.method !== "POST") {
+    return new Response(JSON.stringify({ error: "Method not allowed" }), {
+      status: 405,
+      headers: { ...corsHeaders, "Content-Type": "application/json" },
+    });
+  }
+
   try {
-    const { payload, trace_id: traceIdFromRequest } = await req.json();
+    let body: { payload?: { documents?: unknown[] }; trace_id?: string };
+    try {
+      body = await req.json();
+    } catch {
+      return new Response(JSON.stringify({ error: "JSON inválido no corpo da requisição." }), {
+        status: 400,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
+    const { payload, trace_id: traceIdFromRequest } = body;
     const traceId = typeof traceIdFromRequest === "string" && traceIdFromRequest
       ? traceIdFromRequest
       : crypto.randomUUID();
@@ -98,7 +116,7 @@ serve(async (req) => {
       action: "request_received",
     });
     
-    if (!payload || !payload.documents || payload.documents.length === 0) {
+    if (!payload || !Array.isArray(payload.documents) || payload.documents.length === 0) {
       logDiagnosticEvent({
         traceId,
         stage: "edge_function",
@@ -200,7 +218,12 @@ ${JSON.stringify(payload, null, 2)}`;
     });
 
     return new Response(response.body, {
-      headers: { ...corsHeaders, "Content-Type": "text/event-stream" },
+      headers: {
+        ...corsHeaders,
+        "Content-Type": "text/event-stream",
+        "Cache-Control": "no-cache",
+        Connection: "keep-alive",
+      },
     });
   } catch (e) {
     console.error("analyze error:", e);
