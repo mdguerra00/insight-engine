@@ -4,6 +4,10 @@ import type { Json } from '@/integrations/supabase/types';
 import { FileUpload } from '@/components/FileUpload';
 import { DocumentCard } from '@/components/DocumentCard';
 import { ReportViewer } from '@/components/ReportViewer';
+import { PipelineProgress } from '@/components/PipelineProgress';
+import { FactPackViewer } from '@/components/FactPackViewer';
+import { EngineResultViewer } from '@/components/EngineResultViewer';
+import { AuditViewer } from '@/components/AuditViewer';
 import { Button } from '@/components/ui/button';
 import { extractPdf } from '@/lib/extractors/extractPdf';
 import { extractXlsx } from '@/lib/extractors/extractXlsx';
@@ -11,6 +15,14 @@ import { extractCsv } from '@/lib/extractors/extractCsv';
 import { buildAnalysisPayload } from '@/lib/buildAnalysisPayload';
 import { createTraceId, logDiagnosticEvent } from '@/lib/structuredLogger';
 import type { DocumentWithExtraction, ExtractionStatus } from '@/types/documents';
+import type {
+  PipelineState,
+  DocumentClassification,
+  FactPack,
+  FinancialEngineResult,
+  AuditResult,
+} from '@/types/pipeline';
+import { createInitialPipelineState } from '@/types/pipeline';
 import { Loader2, AlertCircle, Play } from 'lucide-react';
 import { toast } from 'sonner';
 
@@ -32,12 +44,8 @@ function getFileType(file: File): string {
 
 function toErrorDetails(error: unknown) {
   if (error instanceof Error) {
-    return {
-      name: error.name,
-      message: error.message,
-    };
+    return { name: error.name, message: error.message };
   }
-
   return { message: String(error) };
 }
 
@@ -47,6 +55,9 @@ const Index = () => {
   const [reportText, setReportText] = useState('');
   const [reportCreatedAt, setReportCreatedAt] = useState<string>();
   const [isStreaming, setIsStreaming] = useState(false);
+  const [pipelineState, setPipelineState] = useState<PipelineState | null>(null);
+
+  // ─── File upload & extraction (unchanged) ───
 
   const handleFilesSelected = useCallback(async (files: File[]) => {
     const traceId = createTraceId();
@@ -72,7 +83,6 @@ const Index = () => {
         },
       });
 
-      // Add document to state
       const newDoc: DocumentWithExtraction = {
         id: docId,
         file_name: file.name,
@@ -85,14 +95,12 @@ const Index = () => {
       setDocuments(prev => [...prev, newDoc]);
 
       try {
-        // Upload to storage
         const { error: uploadError } = await supabase.storage
           .from('documents')
           .upload(storagePath, file);
 
         if (uploadError) throw uploadError;
 
-        // Save to DB
         await supabase.from('documents').insert({
           id: docId,
           file_name: file.name,
@@ -102,9 +110,23 @@ const Index = () => {
           upload_status: 'uploaded',
         });
 
-        // Update status
         setDocuments(prev => prev.map(d =>
-          d.id === docId ? { ...d, upload_status: 'uploaded' as const, extraction: { id: '', document_id: docId, extraction_status: 'extracting' as ExtractionStatus, detected_type: fileType, preview_text: '', extracted_text: null, extracted_json: null, created_at: new Date().toISOString() } } : d
+          d.id === docId
+            ? {
+                ...d,
+                upload_status: 'uploaded' as const,
+                extraction: {
+                  id: '',
+                  document_id: docId,
+                  extraction_status: 'extracting' as ExtractionStatus,
+                  detected_type: fileType,
+                  preview_text: '',
+                  extracted_text: null,
+                  extracted_json: null,
+                  created_at: new Date().toISOString(),
+                },
+              }
+            : d
         ));
 
         logDiagnosticEvent({
@@ -126,12 +148,11 @@ const Index = () => {
           details: { extractor: fileType },
         });
 
-        // Extract content client-side
         let extractionStatus: ExtractionStatus = 'failed';
         let previewText = '';
         let extractedText: string | null = null;
         let extractedJson: Record<string, unknown> | null = null;
-        let detectedType = fileType;
+        const detectedType = fileType;
 
         if (fileType === 'pdf') {
           const result = await extractPdf(file);
@@ -149,10 +170,14 @@ const Index = () => {
           extractionStatus = result.status;
           previewText = result.preview;
           extractedText = result.rowsSample.map(r => r.join(',')).join('\n');
-          extractedJson = { columns: result.columns, rowCount: result.rowCount, delimiter: result.delimiter, rowsSample: result.rowsSample };
+          extractedJson = {
+            columns: result.columns,
+            rowCount: result.rowCount,
+            delimiter: result.delimiter,
+            rowsSample: result.rowsSample,
+          };
         }
 
-        // Save extraction to DB
         const extractionId = crypto.randomUUID();
         await supabase.from('document_extractions').insert({
           id: extractionId,
@@ -178,22 +203,23 @@ const Index = () => {
           },
         });
 
-        // Update state
         setDocuments(prev => prev.map(d =>
-          d.id === docId ? {
-            ...d,
-            upload_status: 'uploaded' as const,
-            extraction: {
-              id: extractionId,
-              document_id: docId,
-              extraction_status: extractionStatus,
-              detected_type: detectedType,
-              preview_text: previewText,
-              extracted_text: extractedText,
-              extracted_json: extractedJson,
-              created_at: new Date().toISOString(),
-            },
-          } : d
+          d.id === docId
+            ? {
+                ...d,
+                upload_status: 'uploaded' as const,
+                extraction: {
+                  id: extractionId,
+                  document_id: docId,
+                  extraction_status: extractionStatus,
+                  detected_type: detectedType,
+                  preview_text: previewText,
+                  extracted_text: extractedText,
+                  extracted_json: extractedJson,
+                  created_at: new Date().toISOString(),
+                },
+              }
+            : d
         ));
 
         if (extractionStatus === 'failed') {
@@ -228,8 +254,12 @@ const Index = () => {
 
   const extractedDocs = documents.filter(d => d.extraction?.extraction_status === 'extracted');
   const allFailed = documents.length > 0 && extractedDocs.length === 0;
-  const hasExtracting = documents.some(d => d.extraction?.extraction_status === 'extracting' || d.upload_status === 'uploading');
+  const hasExtracting = documents.some(
+    d => d.extraction?.extraction_status === 'extracting' || d.upload_status === 'uploading'
+  );
   const canAnalyze = extractedDocs.length > 0 && !hasExtracting && !isAnalyzing;
+
+  // ─── Pipeline analysis handler ───
 
   const handleAnalyze = useCallback(async () => {
     if (!canAnalyze) return;
@@ -250,6 +280,10 @@ const Index = () => {
     setIsAnalyzing(true);
     setReportText('');
     setIsStreaming(true);
+
+    // Initialize pipeline state
+    const initialState = createInitialPipelineState();
+    setPipelineState(initialState);
 
     try {
       const payload = buildAnalysisPayload(documents);
@@ -298,10 +332,7 @@ const Index = () => {
           stage: 'edge_function',
           status: 'error',
           action: 'analyze_function_http_error',
-          details: {
-            status_code: response.status,
-            error: errorData,
-          },
+          details: { status_code: response.status, error: errorData },
         });
         throw new Error(errorData.error || `Erro HTTP ${response.status}`);
       }
@@ -320,6 +351,7 @@ const Index = () => {
       let textBuffer = '';
       let fullReport = '';
       let streamDone = false;
+      let currentEventType = '';
 
       while (!streamDone) {
         const { done, value } = await reader.read();
@@ -332,7 +364,23 @@ const Index = () => {
           textBuffer = textBuffer.slice(newlineIndex + 1);
 
           if (line.endsWith('\r')) line = line.slice(0, -1);
-          if (line.startsWith(':') || line.trim() === '') continue;
+
+          // Empty line = end of event
+          if (line.trim() === '') {
+            currentEventType = '';
+            continue;
+          }
+
+          // SSE comment
+          if (line.startsWith(':')) continue;
+
+          // Event type line
+          if (line.startsWith('event: ')) {
+            currentEventType = line.slice(7).trim();
+            continue;
+          }
+
+          // Data line
           if (!line.startsWith('data: ')) continue;
 
           const jsonStr = line.slice(6).trim();
@@ -343,12 +391,26 @@ const Index = () => {
 
           try {
             const parsed = JSON.parse(jsonStr);
-            const content = parsed.choices?.[0]?.delta?.content as string | undefined;
-            if (content) {
-              fullReport += content;
-              setReportText(fullReport);
+
+            if (currentEventType === 'pipeline') {
+              // Pipeline progress event
+              handlePipelineEvent(parsed);
+            } else if (currentEventType === 'pipeline_complete') {
+              // Pipeline complete with timings
+              setPipelineState(prev => prev ? { ...prev, timings: parsed.timings } : prev);
+            } else if (currentEventType === 'pipeline_error') {
+              // Pipeline error
+              toast.error(`Erro no pipeline: ${parsed.error}`);
+            } else {
+              // Regular SSE data — OpenAI streaming chunks
+              const content = parsed.choices?.[0]?.delta?.content as string | undefined;
+              if (content) {
+                fullReport += content;
+                setReportText(fullReport);
+              }
             }
           } catch {
+            // Incomplete JSON — put back and wait for more data
             textBuffer = line + '\n' + textBuffer;
             break;
           }
@@ -379,37 +441,47 @@ const Index = () => {
       const now = new Date().toISOString();
       setReportCreatedAt(now);
 
+      // Mark final step as completed
+      setPipelineState(prev => {
+        if (!prev) return prev;
+        const steps = prev.steps.map(s =>
+          s.id === 'final_report' ? { ...s, status: 'completed' as const } : s
+        );
+        return { ...prev, steps };
+      });
+
       logDiagnosticEvent({
         trace_id: traceId,
         stage: 'report',
         status: 'success',
         action: 'report_stream_completed',
-        details: {
-          report_size_chars: fullReport.length,
-        },
+        details: { report_size_chars: fullReport.length },
       });
 
-      // Save report to DB
+      // Save report to DB (with fact pack and audit in report_json)
       const reportId = crypto.randomUUID();
       logDiagnosticEvent({
         trace_id: traceId,
         stage: 'save',
         status: 'start',
         action: 'persist_report_started',
-        details: {
-          report_id: reportId,
-        },
+        details: { report_id: reportId },
       });
 
       try {
         await supabase.from('analysis_reports').insert({
           id: reportId,
           report_text: fullReport,
-          report_json: null,
+          report_json: pipelineState ? {
+            classifications: pipelineState.classifications,
+            fact_pack: pipelineState.factPack,
+            engine_result: pipelineState.engineResult,
+            audit_result: pipelineState.auditResult,
+            timings: pipelineState.timings,
+          } as unknown as Json : null,
           created_at: now,
         });
 
-        // Save report-document relations
         for (const doc of extractedDocs) {
           await supabase.from('report_documents').insert({
             report_id: reportId,
@@ -422,9 +494,7 @@ const Index = () => {
           stage: 'save',
           status: 'success',
           action: 'report_saved_with_relations',
-          details: {
-            report_document_count: extractedDocs.length,
-          },
+          details: { report_document_count: extractedDocs.length },
         });
       } catch (saveError) {
         logDiagnosticEvent({
@@ -452,7 +522,52 @@ const Index = () => {
     } finally {
       setIsAnalyzing(false);
     }
-  }, [canAnalyze, documents, extractedDocs]);
+  }, [canAnalyze, documents, extractedDocs, pipelineState]);
+
+  // ─── Handle pipeline SSE events ───
+
+  const handlePipelineEvent = useCallback((event: {
+    step: string;
+    step_index: number;
+    total_steps: number;
+    label: string;
+    status: 'running' | 'completed' | 'error';
+    result?: unknown;
+    error?: string;
+  }) => {
+    setPipelineState(prev => {
+      if (!prev) return prev;
+
+      const steps = prev.steps.map((s, i) => {
+        if (i === event.step_index) {
+          return { ...s, status: event.status, error: event.error };
+        }
+        return s;
+      });
+
+      const newState = { ...prev, steps };
+
+      // Store results from completed steps
+      if (event.status === 'completed' && event.result) {
+        switch (event.step) {
+          case 'classify':
+            newState.classifications = event.result as DocumentClassification[];
+            break;
+          case 'facts':
+            newState.factPack = event.result as FactPack;
+            break;
+          case 'engine':
+            newState.engineResult = event.result as FinancialEngineResult;
+            break;
+          case 'audit':
+            newState.auditResult = event.result as AuditResult;
+            break;
+        }
+      }
+
+      return newState;
+    });
+  }, []);
 
   return (
     <div className="min-h-screen bg-background">
@@ -480,7 +595,9 @@ const Index = () => {
             <h2 className="text-sm font-semibold text-foreground">
               Documentos ({documents.length})
               {extractedDocs.length > 0 && (
-                <span className="text-muted-foreground font-normal"> — {extractedDocs.length} com conteúdo extraído</span>
+                <span className="text-muted-foreground font-normal">
+                  {' '}— {extractedDocs.length} com conteúdo extraído
+                </span>
               )}
             </h2>
             <div className="space-y-2">
@@ -523,6 +640,39 @@ const Index = () => {
               )}
             </Button>
           </div>
+        )}
+
+        {/* Pipeline Progress */}
+        {pipelineState && (
+          <section>
+            <PipelineProgress steps={pipelineState.steps} />
+          </section>
+        )}
+
+        {/* Phase 9: Verification & Trust UI */}
+
+        {/* Fact Pack Viewer */}
+        {pipelineState?.factPack && (
+          <section>
+            <FactPackViewer
+              factPack={pipelineState.factPack}
+              classifications={pipelineState.classifications}
+            />
+          </section>
+        )}
+
+        {/* Engine Result Viewer */}
+        {pipelineState?.engineResult && (
+          <section>
+            <EngineResultViewer engineResult={pipelineState.engineResult} />
+          </section>
+        )}
+
+        {/* Audit Viewer */}
+        {pipelineState?.auditResult && (
+          <section>
+            <AuditViewer auditResult={pipelineState.auditResult} />
+          </section>
         )}
 
         {/* Report */}
