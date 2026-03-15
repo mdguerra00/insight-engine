@@ -102,8 +102,36 @@ export async function buildFactPack(
     classifications.map((c) => [c.document_name, c])
   );
 
+  const MAX_CONTENT_CHARS = 80_000;
+
   const enrichedDocs = documents.map((doc) => {
     const cls = classMap.get(doc.document_name);
+    let content: Record<string, unknown> = doc.content;
+
+    // Truncate large document content to avoid LLM timeout
+    const contentStr = JSON.stringify(content);
+    if (contentStr.length > MAX_CONTENT_CHARS) {
+      // Truncate text fields within the content instead of slicing raw JSON
+      const truncated: Record<string, unknown> = {};
+      let budget = MAX_CONTENT_CHARS;
+      for (const [key, val] of Object.entries(content)) {
+        const valStr = JSON.stringify(val);
+        if (budget <= 0) break;
+        if (valStr.length > budget) {
+          truncated[key] = typeof val === "string"
+            ? val.slice(0, budget) + "… [TRUNCADO]"
+            : val;
+          budget = 0;
+        } else {
+          truncated[key] = val;
+          budget -= valStr.length;
+        }
+      }
+      truncated._truncated = true;
+      truncated._original_size_chars = contentStr.length;
+      content = truncated;
+    }
+
     return {
       document_name: doc.document_name,
       source_type: doc.source_type,
@@ -114,13 +142,13 @@ export async function buildFactPack(
             entity_detected: cls.entity_detected,
           }
         : { document_class: "desconhecido" },
-      content: doc.content,
+      content,
     };
   });
 
   const userMessage = `Extraia todos os fatos financeiros dos seguintes ${documents.length} documento(s) classificados:
 
-${JSON.stringify(enrichedDocs, null, 2)}`;
+${JSON.stringify(enrichedDocs)}`;
 
   try {
     const result = await llmClient.generateJson<FactPack>({

@@ -18,6 +18,9 @@ export interface SheetData {
   columns: string[];
   rows_preview: unknown[][];
   rows_sample: unknown[][];
+  numeric_columns?: Array<{ column: string; is_monetary: boolean }>;
+  total_row_indices?: number[];
+  has_financial_data?: boolean;
 }
 
 export interface ExtractionResult {
