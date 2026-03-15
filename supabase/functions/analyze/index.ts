@@ -64,6 +64,22 @@ REGRAS DE FORMATAÇÃO DE NÚMEROS:
 - Use separador de milhar com ponto e decimal com vírgula no padrão brasileiro (ex: R$ 1.234,5 milhões).
 - Quando a moeda não puder ser inferida do documento, indique explicitamente a incerteza.
 
+REGRAS DE FORMATAÇÃO DE TABELAS:
+- Use SEMPRE tabelas Markdown GFM para dados comparativos ou com 3+ campos estruturados.
+- NUNCA use listas de bullet para dados que são intrinsecamente tabulares (ex: comparativos de períodos).
+- Formato obrigatório de tabela GFM:
+  | Indicador | Período A | Período B | Δ |
+  |:----------|----------:|----------:|--:|
+  | Receita   | R$ 4.214 mi | R$ 4.017 mi | +4,9% |
+- Regras de alinhamento de colunas:
+  - Coluna de rótulo/indicador: alinhada à esquerda  (:-------)
+  - Colunas de valores numéricos: alinhadas à direita  (-------:)
+  - Coluna de variação (Δ): alinhada à direita  (-------:)
+- Cada linha da tabela deve estar em UMA ÚNICA LINHA do markdown — nunca quebre uma linha de tabela.
+- Deixe uma linha em branco antes e depois de cada tabela.
+- Para tabelas de desempenho por empresa, use sempre as colunas: Indicador | [período atual] | [período anterior] | Δ
+- Para variações positivas, use prefixo + (ex: +10,2%). Para negativas, use − ou valor entre parênteses (ex: −7,6% ou (7,6%)).
+
 REGRAS IMPORTANTES:
 - Nunca invente números ausentes.
 - Sempre diferencie movimentação fiscal de faturamento econômico.

@@ -1,5 +1,6 @@
 import React from 'react';
 import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 import { FileText, Clock } from 'lucide-react';
 
 interface ReportViewerProps {
@@ -24,7 +25,7 @@ export function ReportViewer({ reportText, createdAt, isStreaming }: ReportViewe
         )}
       </div>
       <div className="p-6 report-markdown">
-        <ReactMarkdown>{reportText}</ReactMarkdown>
+        <ReactMarkdown remarkPlugins={[remarkGfm]}>{reportText}</ReactMarkdown>
         {isStreaming && (
           <span className="inline-block w-2 h-4 bg-primary animate-pulse ml-0.5" />
         )}
