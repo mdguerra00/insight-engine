@@ -9,6 +9,7 @@ type GenerateMarkdownParams = {
   messages: LlmMessage[];
   model?: string;
   stream?: boolean;
+  temperature?: number;
 };
 
 type GenerateJsonParams = {
@@ -71,6 +72,7 @@ export function createLlmClient(config: OpenAIConfig = {}) {
             model: params.model ?? reportModel,
             messages: params.messages,
             stream: params.stream ?? true,
+            temperature: params.temperature ?? 0.3,
           },
           300_000, // 5 min for report generation (streaming)
         );
