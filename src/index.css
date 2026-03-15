@@ -98,3 +98,53 @@
 .report-markdown hr {
   @apply my-4 border-border;
 }
+
+/* Tables — financial report quality */
+.report-markdown table {
+  @apply w-full border-collapse my-5 text-sm;
+  border-radius: 0.5rem;
+  overflow: hidden;
+  box-shadow: 0 1px 3px 0 rgb(0 0 0 / 0.08);
+}
+.report-markdown thead {
+  background-color: hsl(var(--header));
+}
+.report-markdown thead th {
+  @apply px-4 py-2.5 text-left font-semibold;
+  color: hsl(var(--header-foreground));
+  font-size: 0.75rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+.report-markdown thead th:not(:first-child) {
+  @apply text-right;
+}
+.report-markdown tbody tr {
+  @apply border-b border-border transition-colors;
+}
+.report-markdown tbody tr:last-child {
+  @apply border-b-0;
+}
+.report-markdown tbody tr:nth-child(even) {
+  background-color: hsl(var(--muted) / 0.4);
+}
+.report-markdown tbody tr:hover {
+  background-color: hsl(var(--primary) / 0.05);
+}
+.report-markdown tbody td {
+  @apply px-4 py-2.5 text-foreground;
+}
+.report-markdown tbody td:not(:first-child) {
+  @apply text-right tabular-nums;
+}
+/* Positive/negative variation coloring */
+.report-markdown tbody td:last-child {
+  @apply font-medium;
+}
+.report-markdown tfoot td {
+  @apply px-4 py-2.5 font-semibold border-t-2 border-border;
+}
+.report-markdown tfoot td:not(:first-child) {
+  @apply text-right tabular-nums;
+}
