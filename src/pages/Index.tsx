@@ -424,14 +424,23 @@ const Index = () => {
           try {
             const parsed = JSON.parse(jsonStr);
 
-            if (currentEventType === 'pipeline') {
+            // Detect event type from SSE event: field OR from data payload structure
+            // (Supabase edge infrastructure may strip the event: field)
+            const effectiveType =
+              currentEventType ||
+              (parsed.step !== undefined && parsed.step_index !== undefined ? 'pipeline' :
+               parsed.timings !== undefined && parsed.total_duration_ms !== undefined ? 'pipeline_complete' :
+               parsed.error !== undefined && parsed.step === undefined && parsed.choices === undefined ? 'pipeline_error' :
+               '');
+
+            if (effectiveType === 'pipeline') {
               // Pipeline progress event
               handlePipelineEvent(parsed);
-            } else if (currentEventType === 'pipeline_complete') {
+            } else if (effectiveType === 'pipeline_complete') {
               // Pipeline complete with timings
               pipelineResultsRef.current.timings = parsed.timings;
               setPipelineState(prev => prev ? { ...prev, timings: parsed.timings } : prev);
-            } else if (currentEventType === 'pipeline_error') {
+            } else if (effectiveType === 'pipeline_error') {
               // Pipeline error
               toast.error(`Erro no pipeline: ${parsed.error}`);
             } else {
@@ -481,11 +490,11 @@ const Index = () => {
       const now = new Date().toISOString();
       setReportCreatedAt(now);
 
-      // Mark final step as completed
+      // Mark all steps as completed (fallback — ensures any missed SSE updates are corrected)
       setPipelineState(prev => {
         if (!prev) return prev;
         const steps = prev.steps.map(s =>
-          s.id === 'final_report' ? { ...s, status: 'completed' as const } : s
+          s.status !== 'error' ? { ...s, status: 'completed' as const } : s
         );
         return { ...prev, steps };
       });
