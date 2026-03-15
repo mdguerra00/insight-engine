@@ -366,17 +366,26 @@ const Index = () => {
       // Timeout: abort if no data received for 4 minutes
       const STREAM_TIMEOUT_MS = 240_000;
       let streamTimeoutId: ReturnType<typeof setTimeout> | undefined;
+      let streamTimedOut = false;
       const resetStreamTimeout = () => {
         if (streamTimeoutId) clearTimeout(streamTimeoutId);
         streamTimeoutId = setTimeout(() => {
-          reader.cancel('Timeout: nenhum dado recebido em 4 minutos');
+          streamTimedOut = true;
           streamDone = true;
+          reader.cancel('Timeout: nenhum dado recebido em 4 minutos').catch(() => {});
         }, STREAM_TIMEOUT_MS);
       };
       resetStreamTimeout();
 
       while (!streamDone) {
-        const { done, value } = await reader.read();
+        let readResult: ReadableStreamReadResult<Uint8Array>;
+        try {
+          readResult = await reader.read();
+        } catch {
+          // Reader was cancelled (timeout or other reason)
+          break;
+        }
+        const { done, value } = readResult;
         if (done) break;
         resetStreamTimeout();
         textBuffer += decoder.decode(value, { stream: true });
@@ -463,6 +472,10 @@ const Index = () => {
 
       // Clear stream timeout
       if (streamTimeoutId) clearTimeout(streamTimeoutId);
+
+      if (streamTimedOut) {
+        throw new Error('O pipeline excedeu o tempo limite (4 minutos sem resposta). Tente com documentos menores.');
+      }
 
       setIsStreaming(false);
       const now = new Date().toISOString();
