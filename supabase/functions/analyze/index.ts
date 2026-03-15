@@ -1,17 +1,36 @@
+// ─────────────────────────────────────────────────────────────────
+// Multi-layer Analysis Pipeline
+// Layer 1: Extraction (client-side, already done)
+// Layer 2: Classification (LLM)
+// Layer 3: Fact Pack Builder (LLM)
+// Layer 4: Financial Engine (deterministic code)
+// Layer 5: Draft Report (LLM)
+// Layer 6: Audit (LLM)
+// Layer 7: Final Report (LLM, streaming)
+// ─────────────────────────────────────────────────────────────────
+
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createLlmClient } from "./llmClient.ts";
+import { classifyDocuments } from "./classifier.ts";
+import { buildFactPack } from "./factPackBuilder.ts";
+import { runFinancialEngine } from "./financialEngine.ts";
+import { auditReport } from "./auditor.ts";
+import { DRAFT_REPORT_PROMPT, FINAL_REPORT_PROMPT } from "./prompts.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Methods": "POST, OPTIONS",
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
+  "Access-Control-Allow-Headers":
+    "authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
 };
+
+// ─── Diagnostic logging ───
 
 type DiagnosticStatus = "start" | "success" | "error" | "info";
 
 function logDiagnosticEvent(params: {
   traceId: string;
-  stage: "edge_function" | "prompt" | "model_call";
+  stage: string;
   status: DiagnosticStatus;
   action: string;
   details?: Record<string, unknown>;
@@ -24,87 +43,37 @@ function logDiagnosticEvent(params: {
     action: params.action,
     details: params.details,
   };
-
   if (params.status === "error") {
     console.error("[diagnostic]", payload);
-    return;
+  } else {
+    console.log("[diagnostic]", payload);
   }
-
-  console.log("[diagnostic]", payload);
 }
 
-const SYSTEM_PROMPT = `Você é um analista empresarial, financeiro, contábil e fiscal de altíssimo nível.
+// ─── Pipeline step definitions ───
 
-Sua tarefa é analisar profundamente documentos empresariais fornecidos pelo sistema e produzir um relatório executivo preciso, rigoroso e útil para tomada de decisão.
+const PIPELINE_STEPS = [
+  { id: "classify", label: "Classificando documentos" },
+  { id: "facts", label: "Extraindo fatos financeiros" },
+  { id: "engine", label: "Calculando indicadores" },
+  { id: "draft", label: "Gerando relatório draft" },
+  { id: "audit", label: "Auditando relatório" },
+  { id: "final_report", label: "Gerando relatório final" },
+] as const;
 
-IMPORTANTE:
-Você NÃO deve assumir previamente o contexto da empresa, setor ou natureza da operação.
-O contexto deve ser inferido a partir dos próprios documentos.
-O objetivo não é resumir documentos, mas reconstruir a realidade econômica, financeira, fiscal e operacional implícita neles.
+// ─── SSE helpers ───
 
-METODOLOGIA OBRIGATÓRIA:
-1. Identifique o tipo provável de cada documento.
-2. Extraia os fatos concretos presentes nos dados.
-3. Normalize números, datas, percentuais e períodos.
-4. Cruze informações entre documentos.
-5. Verifique consistência entre números quando possível.
-6. Calcule indicadores derivados quando houver base suficiente.
-7. Separe claramente:
-   - fatos explícitos
-   - cálculos derivados
-   - interpretações plausíveis
-   - limitações ou incertezas
+function sseEvent(event: string, data: unknown): Uint8Array {
+  const encoder = new TextEncoder();
+  return encoder.encode(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+}
 
-REGRAS DE FORMATAÇÃO DE NÚMEROS:
-- SEMPRE prefixe valores monetários com o símbolo da moeda (R$, US$, EUR, etc.).
-- SEMPRE indique a grandeza explicitamente: mil, milhões, bilhões. Exemplo: "R$ 4,2 bilhões", "R$ 697 milhões", "R$ 44 milhões".
-- NUNCA apresente números monetários soltos sem moeda e grandeza (ex: NÃO escreva "4.207", escreva "R$ 4,2 bilhões" ou "R$ 4.207 milhões").
-- Defina a unidade padrão no início de cada seção com tabelas numéricas (ex: "Valores em R$ milhões") E TAMBÉM repita o símbolo da moeda em cada valor individual.
-- Para percentuais, sempre inclua o símbolo % e indique se é variação (Δ), taxa ou proporção.
-- Use separador de milhar com ponto e decimal com vírgula no padrão brasileiro (ex: R$ 1.234,5 milhões).
-- Quando a moeda não puder ser inferida do documento, indique explicitamente a incerteza.
+function sseData(data: string): Uint8Array {
+  const encoder = new TextEncoder();
+  return encoder.encode(`data: ${data}\n\n`);
+}
 
-REGRAS DE FORMATAÇÃO DE TABELAS:
-- Use SEMPRE tabelas Markdown GFM para dados comparativos ou com 3+ campos estruturados.
-- NUNCA use listas de bullet para dados que são intrinsecamente tabulares (ex: comparativos de períodos).
-- Formato obrigatório de tabela GFM:
-  | Indicador | Período A | Período B | Δ |
-  |:----------|----------:|----------:|--:|
-  | Receita   | R$ 4.214 mi | R$ 4.017 mi | +4,9% |
-- Regras de alinhamento de colunas:
-  - Coluna de rótulo/indicador: alinhada à esquerda  (:-------)
-  - Colunas de valores numéricos: alinhadas à direita  (-------:)
-  - Coluna de variação (Δ): alinhada à direita  (-------:)
-- Cada linha da tabela deve estar em UMA ÚNICA LINHA do markdown — nunca quebre uma linha de tabela.
-- Deixe uma linha em branco antes e depois de cada tabela.
-- Para tabelas de desempenho por empresa, use sempre as colunas: Indicador | [período atual] | [período anterior] | Δ
-- Para variações positivas, use prefixo + (ex: +10,2%). Para negativas, use − ou valor entre parênteses (ex: −7,6% ou (7,6%)).
-
-REGRAS IMPORTANTES:
-- Nunca invente números ausentes.
-- Sempre diferencie movimentação fiscal de faturamento econômico.
-- Sempre diferencie saldo de fluxo.
-- Sempre diferencie competência de caixa.
-- Sempre diferencie crédito fiscal de imposto pago.
-- Nunca apresente inferências como fatos.
-- Se não houver dados suficientes para uma conclusão, diga explicitamente.
-- Prefira profundidade analítica a generalizações superficiais.
-
-FORMATO OBRIGATÓRIO DO RELATÓRIO:
-1. Classificação dos documentos
-2. Fatos principais extraídos
-3. Reconciliações e checagens
-4. Indicadores derivados
-5. Leitura gerencial
-6. Pontos de atenção e limitações
-7. Conclusão executiva
-
-ESTILO:
-- parecer profissional de consultoria
-- claro e direto
-- sem jargão desnecessário
-- sem frases genéricas
-- explicar a lógica das conclusões`;
+// ─── Main handler ───
 
 serve(async (req) => {
   if (req.method === "OPTIONS") {
@@ -123,16 +92,20 @@ serve(async (req) => {
     try {
       body = await req.json();
     } catch {
-      return new Response(JSON.stringify({ error: "JSON inválido no corpo da requisição." }), {
-        status: 400,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
+      return new Response(
+        JSON.stringify({ error: "JSON inválido no corpo da requisição." }),
+        {
+          status: 400,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        }
+      );
     }
 
     const { payload, trace_id: traceIdFromRequest } = body;
-    const traceId = typeof traceIdFromRequest === "string" && traceIdFromRequest
-      ? traceIdFromRequest
-      : crypto.randomUUID();
+    const traceId =
+      typeof traceIdFromRequest === "string" && traceIdFromRequest
+        ? traceIdFromRequest
+        : crypto.randomUUID();
 
     logDiagnosticEvent({
       traceId,
@@ -140,8 +113,12 @@ serve(async (req) => {
       status: "start",
       action: "request_received",
     });
-    
-    if (!payload || !Array.isArray(payload.documents) || payload.documents.length === 0) {
+
+    if (
+      !payload ||
+      !Array.isArray(payload.documents) ||
+      payload.documents.length === 0
+    ) {
       logDiagnosticEvent({
         traceId,
         stage: "edge_function",
@@ -149,8 +126,13 @@ serve(async (req) => {
         action: "invalid_payload",
       });
       return new Response(
-        JSON.stringify({ error: "Nenhum documento com conteúdo extraído fornecido." }),
-        { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        JSON.stringify({
+          error: "Nenhum documento com conteúdo extraído fornecido.",
+        }),
+        {
+          status: 400,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        }
       );
     }
 
@@ -167,82 +149,337 @@ serve(async (req) => {
       throw error;
     }
 
-    logDiagnosticEvent({
-      traceId,
-      stage: "prompt",
-      status: "info",
-      action: "prompt_prepared",
-      details: {
-        document_count: payload.documents.length,
-        source_types: payload.documents.map((doc: { source_type?: string }) => doc.source_type ?? "unknown"),
-      },
-    });
+    const documents = payload.documents as Array<{
+      document_name: string;
+      source_type: string;
+      content: Record<string, unknown>;
+    }>;
 
-    const userMessage = `Analise os seguintes documentos empresariais e produza o relatório executivo conforme as instruções.
+    // ─── Create SSE stream for pipeline progress + final report ───
+    const { readable, writable } = new TransformStream();
+    const writer = writable.getWriter();
 
-Dados dos documentos:
+    // Run pipeline in background, writing to stream
+    (async () => {
+      try {
+        const timings: Record<string, number> = {};
 
-${JSON.stringify(payload, null, 2)}`;
+        // Helper: send pipeline progress event
+        const sendProgress = async (
+          stepIndex: number,
+          status: "running" | "completed" | "error",
+          result?: unknown,
+          error?: string
+        ) => {
+          const step = PIPELINE_STEPS[stepIndex];
+          await writer.write(
+            sseEvent("pipeline", {
+              step: step.id,
+              step_index: stepIndex,
+              total_steps: PIPELINE_STEPS.length,
+              label: step.label,
+              status,
+              result: status === "completed" ? result : undefined,
+              error: status === "error" ? error : undefined,
+            })
+          );
+        };
 
-    logDiagnosticEvent({
-      traceId,
-      stage: "model_call",
-      status: "start",
-      action: "provider_request_started",
-      details: {
-        provider: "openai",
-        model: llmClient.models.report,
-      },
-    });
+        // ═══════════════════════════════════════════════════════
+        // STEP 1: Classify documents
+        // ═══════════════════════════════════════════════════════
+        let t0 = Date.now();
+        await sendProgress(0, "running");
 
-    const response = await llmClient.generateMarkdown({
-      messages: [
-        { role: "system", content: SYSTEM_PROMPT },
-        { role: "user", content: userMessage },
-      ],
-      model: llmClient.models.report,
-      stream: true,
-    });
+        logDiagnosticEvent({
+          traceId,
+          stage: "classify",
+          status: "start",
+          action: "classifying_documents",
+          details: { document_count: documents.length },
+        });
 
-    if (!response.ok) {
-      if (response.status === 429) {
-        return new Response(
-          JSON.stringify({ error: "Limite de requisições excedido. Tente novamente em alguns minutos." }),
-          { status: 429, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        const classifications = await classifyDocuments(documents, llmClient);
+        timings.classify = Date.now() - t0;
+
+        logDiagnosticEvent({
+          traceId,
+          stage: "classify",
+          status: "success",
+          action: "classification_completed",
+          details: {
+            classifications: classifications.map((c) => ({
+              name: c.document_name,
+              class: c.document_class,
+              confidence: c.confidence,
+            })),
+            duration_ms: timings.classify,
+          },
+        });
+
+        await sendProgress(0, "completed", classifications);
+
+        // ═══════════════════════════════════════════════════════
+        // STEP 2: Build Fact Pack
+        // ═══════════════════════════════════════════════════════
+        t0 = Date.now();
+        await sendProgress(1, "running");
+
+        logDiagnosticEvent({
+          traceId,
+          stage: "facts",
+          status: "start",
+          action: "extracting_facts",
+        });
+
+        const factPack = await buildFactPack(
+          documents,
+          classifications,
+          llmClient
         );
-      }
-      if (response.status === 402) {
-        return new Response(
-          JSON.stringify({ error: "Créditos insuficientes. Adicione créditos ao workspace." }),
-          { status: 402, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        timings.facts = Date.now() - t0;
+
+        const factCount = Object.values(factPack.facts).reduce(
+          (sum, arr) => sum + arr.length,
+          0
         );
+
+        logDiagnosticEvent({
+          traceId,
+          stage: "facts",
+          status: "success",
+          action: "facts_extracted",
+          details: {
+            fact_count: factCount,
+            gaps: factPack.gaps.length,
+            warnings: factPack.warnings.length,
+            duration_ms: timings.facts,
+          },
+        });
+
+        await sendProgress(1, "completed", factPack);
+
+        // ═══════════════════════════════════════════════════════
+        // STEP 3: Financial Engine (deterministic)
+        // ═══════════════════════════════════════════════════════
+        t0 = Date.now();
+        await sendProgress(2, "running");
+
+        const engineResult = runFinancialEngine(factPack);
+        timings.engine = Date.now() - t0;
+
+        logDiagnosticEvent({
+          traceId,
+          stage: "engine",
+          status: "success",
+          action: "engine_completed",
+          details: {
+            indicators_calculated: engineResult.calculated_indicators.length,
+            reconciliations: engineResult.reconciliations.length,
+            duration_ms: timings.engine,
+          },
+        });
+
+        await sendProgress(2, "completed", engineResult);
+
+        // ═══════════════════════════════════════════════════════
+        // STEP 4: Draft Report (non-streaming)
+        // ═══════════════════════════════════════════════════════
+        t0 = Date.now();
+        await sendProgress(3, "running");
+
+        logDiagnosticEvent({
+          traceId,
+          stage: "draft",
+          status: "start",
+          action: "generating_draft",
+        });
+
+        const enrichedPayload = {
+          fact_pack: factPack,
+          financial_engine: engineResult,
+          classifications,
+        };
+
+        const draftUserMessage = `Com base no FACT PACK enriquecido abaixo, gere o relatório executivo DRAFT.
+
+${JSON.stringify(enrichedPayload, null, 2)}`;
+
+        const draftResponse = await llmClient.generateMarkdown({
+          messages: [
+            { role: "system", content: DRAFT_REPORT_PROMPT },
+            { role: "user", content: draftUserMessage },
+          ],
+          model: llmClient.models.report,
+          stream: false,
+        });
+
+        if (!draftResponse.ok) {
+          const errText = await draftResponse.text();
+          throw new Error(`Draft generation failed (${draftResponse.status}): ${errText}`);
+        }
+
+        const draftJson = await draftResponse.json();
+        const draftReport =
+          draftJson.choices?.[0]?.message?.content || "";
+        timings.draft = Date.now() - t0;
+
+        logDiagnosticEvent({
+          traceId,
+          stage: "draft",
+          status: "success",
+          action: "draft_completed",
+          details: {
+            draft_size_chars: draftReport.length,
+            duration_ms: timings.draft,
+          },
+        });
+
+        await sendProgress(3, "completed", { draft_size: draftReport.length });
+
+        // ═══════════════════════════════════════════════════════
+        // STEP 5: Audit
+        // ═══════════════════════════════════════════════════════
+        t0 = Date.now();
+        await sendProgress(4, "running");
+
+        logDiagnosticEvent({
+          traceId,
+          stage: "audit",
+          status: "start",
+          action: "auditing_report",
+        });
+
+        const auditResult = await auditReport(
+          draftReport,
+          factPack,
+          engineResult,
+          llmClient
+        );
+        timings.audit = Date.now() - t0;
+
+        logDiagnosticEvent({
+          traceId,
+          stage: "audit",
+          status: "success",
+          action: "audit_completed",
+          details: {
+            issues: auditResult.issues.length,
+            quality: auditResult.overall_quality,
+            duration_ms: timings.audit,
+          },
+        });
+
+        await sendProgress(4, "completed", auditResult);
+
+        // ═══════════════════════════════════════════════════════
+        // STEP 6: Final Report (streaming)
+        // ═══════════════════════════════════════════════════════
+        t0 = Date.now();
+        await sendProgress(5, "running");
+
+        logDiagnosticEvent({
+          traceId,
+          stage: "final_report",
+          status: "start",
+          action: "generating_final_report",
+        });
+
+        const finalUserMessage = `Produza a VERSÃO FINAL do relatório executivo.
+
+RELATÓRIO DRAFT:
+---
+${draftReport}
+---
+
+ACHADOS DA AUDITORIA:
+${JSON.stringify(auditResult, null, 2)}
+
+FACT PACK:
+${JSON.stringify(enrichedPayload, null, 2)}`;
+
+        const finalResponse = await llmClient.generateMarkdown({
+          messages: [
+            { role: "system", content: FINAL_REPORT_PROMPT },
+            { role: "user", content: finalUserMessage },
+          ],
+          model: llmClient.models.report,
+          stream: true,
+        });
+
+        if (!finalResponse.ok) {
+          const errText = await finalResponse.text();
+          if (finalResponse.status === 429) {
+            throw new Error("RATE_LIMIT");
+          }
+          if (finalResponse.status === 402) {
+            throw new Error("INSUFFICIENT_CREDITS");
+          }
+          throw new Error(
+            `Final report generation failed (${finalResponse.status}): ${errText}`
+          );
+        }
+
+        // Pipe the OpenAI streaming response directly to our SSE stream
+        if (finalResponse.body) {
+          const reader = finalResponse.body.getReader();
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            await writer.write(value);
+          }
+        }
+
+        timings.final_report = Date.now() - t0;
+
+        logDiagnosticEvent({
+          traceId,
+          stage: "final_report",
+          status: "success",
+          action: "final_report_streamed",
+          details: {
+            duration_ms: timings.final_report,
+            total_pipeline_ms: Object.values(timings).reduce((a, b) => a + b, 0),
+          },
+        });
+
+        // Send pipeline complete event with metadata
+        await writer.write(
+          sseEvent("pipeline_complete", {
+            timings,
+            total_duration_ms: Object.values(timings).reduce(
+              (a, b) => a + b,
+              0
+            ),
+          })
+        );
+      } catch (error) {
+        console.error("Pipeline error:", error);
+        const errorMessage =
+          error instanceof Error ? error.message : String(error);
+
+        // Send error event
+        await writer.write(
+          sseEvent("pipeline_error", {
+            error: errorMessage,
+            step: "unknown",
+          })
+        );
+
+        logDiagnosticEvent({
+          traceId,
+          stage: "edge_function",
+          status: "error",
+          action: "pipeline_failed",
+          details: { error: errorMessage },
+        });
+      } finally {
+        await writer.close();
       }
-      const t = await response.text();
-      logDiagnosticEvent({
-        traceId,
-        stage: "model_call",
-        status: "error",
-        action: "provider_request_failed",
-        details: {
-          status_code: response.status,
-          body: t,
-        },
-      });
-      console.error("OpenAI request error:", response.status, t);
-      return new Response(
-        JSON.stringify({ error: "Erro ao chamar o modelo de IA." }),
-        { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-      );
-    }
+    })();
 
-    logDiagnosticEvent({
-      traceId,
-      stage: "model_call",
-      status: "success",
-      action: "provider_stream_ready",
-    });
-
-    return new Response(response.body, {
+    // Return the readable stream immediately
+    return new Response(readable, {
       headers: {
         ...corsHeaders,
         "Content-Type": "text/event-stream",
@@ -253,8 +490,13 @@ ${JSON.stringify(payload, null, 2)}`;
   } catch (e) {
     console.error("analyze error:", e);
     return new Response(
-      JSON.stringify({ error: e instanceof Error ? e.message : "Erro desconhecido" }),
-      { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      JSON.stringify({
+        error: e instanceof Error ? e.message : "Erro desconhecido",
+      }),
+      {
+        status: 500,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      }
     );
   }
 });
