@@ -1,5 +1,14 @@
 import type { DocumentWithExtraction, AnalysisPayload, AnalysisDocumentPayload } from '@/types/documents';
 
+// Limit text content sent to edge function to avoid timeouts
+const MAX_TEXT_CHARS = 100_000;
+
+function truncateText(text: string | undefined): string | undefined {
+  if (!text) return text;
+  if (text.length <= MAX_TEXT_CHARS) return text;
+  return text.slice(0, MAX_TEXT_CHARS) + '\n\n[... TEXTO TRUNCADO — original: ' + text.length.toLocaleString() + ' caracteres]';
+}
+
 export function buildAnalysisPayload(documents: DocumentWithExtraction[]): AnalysisPayload {
   const validDocs = documents.filter(
     d => d.extraction && d.extraction.extraction_status === 'extracted'
@@ -10,6 +19,12 @@ export function buildAnalysisPayload(documents: DocumentWithExtraction[]): Analy
     const sourceType = doc.file_type;
 
     if (sourceType === 'xlsx' && ext.extracted_json) {
+      const sheets = ((ext.extracted_json as any).sheets || []).map((sheet: any) => ({
+        ...sheet,
+        // Only send preview rows (not full sample) to limit payload
+        rows_preview: (sheet.rows_preview || []).slice(0, 50),
+        rows_sample: (sheet.rows_sample || []).slice(0, 100),
+      }));
       return {
         document_name: doc.file_name,
         source_type: 'xlsx',
@@ -18,7 +33,7 @@ export function buildAnalysisPayload(documents: DocumentWithExtraction[]): Analy
           metadata: {
             sheet_count: (ext.extracted_json as any).sheetCount || 0,
           },
-          sheets: (ext.extracted_json as any).sheets || [],
+          sheets,
         },
       };
     }
@@ -35,7 +50,7 @@ export function buildAnalysisPayload(documents: DocumentWithExtraction[]): Analy
             delimiter: (ext.extracted_json as any).delimiter || ',',
           },
           text_preview: ext.preview_text,
-          full_text: ext.extracted_text || undefined,
+          full_text: truncateText(ext.extracted_text || undefined),
         },
       };
     }
@@ -47,7 +62,7 @@ export function buildAnalysisPayload(documents: DocumentWithExtraction[]): Analy
       detected_document_type: ext.detected_type || 'unknown',
       content: {
         text_preview: ext.preview_text,
-        full_text: ext.extracted_text || undefined,
+        full_text: truncateText(ext.extracted_text || undefined),
       },
     };
   });
