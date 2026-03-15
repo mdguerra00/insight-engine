@@ -18,7 +18,7 @@ export interface SheetData {
   columns: string[];
   rows_preview: unknown[][];
   rows_sample: unknown[][];
-  numeric_columns?: Array<{ column: string; is_monetary: boolean }>;
+  numeric_columns?: Array<{ header: string; is_monetary: boolean; min: number | null; max: number | null; sum: number }>;
   total_row_indices?: number[];
   has_financial_data?: boolean;
 }
