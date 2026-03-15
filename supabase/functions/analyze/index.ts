@@ -55,6 +55,15 @@ METODOLOGIA OBRIGATÓRIA:
    - interpretações plausíveis
    - limitações ou incertezas
 
+REGRAS DE FORMATAÇÃO DE NÚMEROS:
+- SEMPRE prefixe valores monetários com o símbolo da moeda (R$, US$, EUR, etc.).
+- SEMPRE indique a grandeza explicitamente: mil, milhões, bilhões. Exemplo: "R$ 4,2 bilhões", "R$ 697 milhões", "R$ 44 milhões".
+- NUNCA apresente números monetários soltos sem moeda e grandeza (ex: NÃO escreva "4.207", escreva "R$ 4,2 bilhões" ou "R$ 4.207 milhões").
+- Defina a unidade padrão no início de cada seção com tabelas numéricas (ex: "Valores em R$ milhões") E TAMBÉM repita o símbolo da moeda em cada valor individual.
+- Para percentuais, sempre inclua o símbolo % e indique se é variação (Δ), taxa ou proporção.
+- Use separador de milhar com ponto e decimal com vírgula no padrão brasileiro (ex: R$ 1.234,5 milhões).
+- Quando a moeda não puder ser inferida do documento, indique explicitamente a incerteza.
+
 REGRAS IMPORTANTES:
 - Nunca invente números ausentes.
 - Sempre diferencie movimentação fiscal de faturamento econômico.
