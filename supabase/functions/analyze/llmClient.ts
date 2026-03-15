@@ -44,7 +44,9 @@ export function createLlmClient(config: OpenAIConfig = {}) {
   const extractionModel = config.extractionModel ?? Deno.env.get("OPENAI_MODEL_EXTRACTION") ?? DEFAULT_EXTRACTION_MODEL;
   const reportModel = config.reportModel ?? Deno.env.get("OPENAI_MODEL_REPORT") ?? DEFAULT_REPORT_MODEL;
 
-  async function callOpenAI(body: Record<string, unknown>) {
+  const DEFAULT_TIMEOUT_MS = 180_000; // 3 minutes
+
+  async function callOpenAI(body: Record<string, unknown>, timeoutMs?: number) {
     return fetch(OPENAI_API_URL, {
       method: "POST",
       headers: {
@@ -52,6 +54,7 @@ export function createLlmClient(config: OpenAIConfig = {}) {
         "Content-Type": "application/json",
       },
       body: JSON.stringify(body),
+      signal: AbortSignal.timeout(timeoutMs ?? DEFAULT_TIMEOUT_MS),
     });
   }
 
@@ -62,20 +65,38 @@ export function createLlmClient(config: OpenAIConfig = {}) {
     },
 
     async generateMarkdown(params: GenerateMarkdownParams) {
-      return callOpenAI({
-        model: params.model ?? reportModel,
-        messages: params.messages,
-        stream: params.stream ?? true,
-      });
+      try {
+        return await callOpenAI(
+          {
+            model: params.model ?? reportModel,
+            messages: params.messages,
+            stream: params.stream ?? true,
+          },
+          300_000, // 5 min for report generation (streaming)
+        );
+      } catch (err) {
+        if (err instanceof DOMException && err.name === "TimeoutError") {
+          throw new Error("Timeout: a geração do relatório excedeu 5 minutos.");
+        }
+        throw err;
+      }
     },
 
     async generateJson<T>(params: GenerateJsonParams): Promise<T> {
-      const response = await callOpenAI({
-        model: params.model ?? extractionModel,
-        messages: params.messages,
-        response_format: { type: "json_object" },
-        stream: false,
-      });
+      let response: Response;
+      try {
+        response = await callOpenAI({
+          model: params.model ?? extractionModel,
+          messages: params.messages,
+          response_format: { type: "json_object" },
+          stream: false,
+        });
+      } catch (err) {
+        if (err instanceof DOMException && err.name === "TimeoutError") {
+          throw new Error("Timeout: a chamada LLM excedeu 3 minutos. Tente com documentos menores.");
+        }
+        throw err;
+      }
 
       if (!response.ok) {
         const body = await response.text();

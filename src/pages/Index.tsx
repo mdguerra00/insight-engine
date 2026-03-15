@@ -1,4 +1,4 @@
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useRef } from 'react';
 import { supabase } from '@/integrations/supabase/client';
 import type { Json } from '@/integrations/supabase/types';
 import { FileUpload } from '@/components/FileUpload';
@@ -56,6 +56,15 @@ const Index = () => {
   const [reportCreatedAt, setReportCreatedAt] = useState<string>();
   const [isStreaming, setIsStreaming] = useState(false);
   const [pipelineState, setPipelineState] = useState<PipelineState | null>(null);
+
+  // Ref to track pipeline results for use in save (avoids stale closure)
+  const pipelineResultsRef = useRef<{
+    classifications?: DocumentClassification[];
+    factPack?: FactPack;
+    engineResult?: FinancialEngineResult;
+    auditResult?: AuditResult;
+    timings?: Record<string, number>;
+  }>({});
 
   // ─── File upload & extraction (unchanged) ───
 
@@ -284,6 +293,7 @@ const Index = () => {
     // Initialize pipeline state
     const initialState = createInitialPipelineState();
     setPipelineState(initialState);
+    pipelineResultsRef.current = {};
 
     try {
       const payload = buildAnalysisPayload(documents);
@@ -353,9 +363,22 @@ const Index = () => {
       let streamDone = false;
       let currentEventType = '';
 
+      // Timeout: abort if no data received for 4 minutes
+      const STREAM_TIMEOUT_MS = 240_000;
+      let streamTimeoutId: ReturnType<typeof setTimeout> | undefined;
+      const resetStreamTimeout = () => {
+        if (streamTimeoutId) clearTimeout(streamTimeoutId);
+        streamTimeoutId = setTimeout(() => {
+          reader.cancel('Timeout: nenhum dado recebido em 4 minutos');
+          streamDone = true;
+        }, STREAM_TIMEOUT_MS);
+      };
+      resetStreamTimeout();
+
       while (!streamDone) {
         const { done, value } = await reader.read();
         if (done) break;
+        resetStreamTimeout();
         textBuffer += decoder.decode(value, { stream: true });
 
         let newlineIndex: number;
@@ -397,6 +420,7 @@ const Index = () => {
               handlePipelineEvent(parsed);
             } else if (currentEventType === 'pipeline_complete') {
               // Pipeline complete with timings
+              pipelineResultsRef.current.timings = parsed.timings;
               setPipelineState(prev => prev ? { ...prev, timings: parsed.timings } : prev);
             } else if (currentEventType === 'pipeline_error') {
               // Pipeline error
@@ -437,6 +461,9 @@ const Index = () => {
         }
       }
 
+      // Clear stream timeout
+      if (streamTimeoutId) clearTimeout(streamTimeoutId);
+
       setIsStreaming(false);
       const now = new Date().toISOString();
       setReportCreatedAt(now);
@@ -469,15 +496,16 @@ const Index = () => {
       });
 
       try {
+        const results = pipelineResultsRef.current;
         await supabase.from('analysis_reports').insert({
           id: reportId,
           report_text: fullReport,
-          report_json: pipelineState ? {
-            classifications: pipelineState.classifications,
-            fact_pack: pipelineState.factPack,
-            engine_result: pipelineState.engineResult,
-            audit_result: pipelineState.auditResult,
-            timings: pipelineState.timings,
+          report_json: (results.classifications || results.factPack) ? {
+            classifications: results.classifications,
+            fact_pack: results.factPack,
+            engine_result: results.engineResult,
+            audit_result: results.auditResult,
+            timings: results.timings,
           } as unknown as Json : null,
           created_at: now,
         });
@@ -522,7 +550,7 @@ const Index = () => {
     } finally {
       setIsAnalyzing(false);
     }
-  }, [canAnalyze, documents, extractedDocs, pipelineState]);
+  }, [canAnalyze, documents, extractedDocs]);
 
   // ─── Handle pipeline SSE events ───
 
@@ -552,15 +580,19 @@ const Index = () => {
         switch (event.step) {
           case 'classify':
             newState.classifications = event.result as DocumentClassification[];
+            pipelineResultsRef.current.classifications = newState.classifications;
             break;
           case 'facts':
             newState.factPack = event.result as FactPack;
+            pipelineResultsRef.current.factPack = newState.factPack;
             break;
           case 'engine':
             newState.engineResult = event.result as FinancialEngineResult;
+            pipelineResultsRef.current.engineResult = newState.engineResult;
             break;
           case 'audit':
             newState.auditResult = event.result as AuditResult;
+            pipelineResultsRef.current.auditResult = newState.auditResult;
             break;
         }
       }

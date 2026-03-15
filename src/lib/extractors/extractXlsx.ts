@@ -154,9 +154,9 @@ export async function extractXlsx(file: File): Promise<XlsxExtractionResult> {
       };
 
       // Add enhanced metadata
-      (sheetData as Record<string, unknown>).numeric_columns = numericColumns;
-      (sheetData as Record<string, unknown>).total_row_indices = totalRowIndices;
-      (sheetData as Record<string, unknown>).has_financial_data = numericColumns.some(c => c.is_monetary);
+      sheetData.numeric_columns = numericColumns;
+      sheetData.total_row_indices = totalRowIndices;
+      sheetData.has_financial_data = numericColumns.some(c => c.is_monetary);
 
       sheets.push(sheetData);
     }

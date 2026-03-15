@@ -303,7 +303,7 @@ serve(async (req) => {
 
         const draftUserMessage = `Com base no FACT PACK enriquecido abaixo, gere o relatório executivo DRAFT.
 
-${JSON.stringify(enrichedPayload, null, 2)}`;
+${JSON.stringify(enrichedPayload)}`;
 
         const draftResponse = await llmClient.generateMarkdown({
           messages: [
@@ -393,10 +393,10 @@ ${draftReport}
 ---
 
 ACHADOS DA AUDITORIA:
-${JSON.stringify(auditResult, null, 2)}
+${JSON.stringify(auditResult)}
 
 FACT PACK:
-${JSON.stringify(enrichedPayload, null, 2)}`;
+${JSON.stringify(enrichedPayload)}`;
 
         const finalResponse = await llmClient.generateMarkdown({
           messages: [
