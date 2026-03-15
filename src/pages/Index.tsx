@@ -14,6 +14,14 @@ import type { DocumentWithExtraction, ExtractionStatus } from '@/types/documents
 import { Loader2, AlertCircle, Play } from 'lucide-react';
 import { toast } from 'sonner';
 
+function sanitizeFileName(name: string): string {
+  return name
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/\s+/g, '_')
+    .replace(/[^a-zA-Z0-9_.\-]/g, '');
+}
+
 function getFileType(file: File): string {
   const ext = file.name.split('.').pop()?.toLowerCase() || '';
   if (ext === 'pdf') return 'pdf';
@@ -46,7 +54,8 @@ const Index = () => {
     for (const file of files) {
       const fileType = getFileType(file);
       const docId = crypto.randomUUID();
-      const storagePath = `uploads/${docId}/${file.name}`;
+      const safeName = sanitizeFileName(file.name);
+      const storagePath = `uploads/${docId}/${safeName}`;
 
       logDiagnosticEvent({
         trace_id: traceId,
